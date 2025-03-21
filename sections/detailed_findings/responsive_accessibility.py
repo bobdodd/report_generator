@@ -6,7 +6,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import logging
 from typing import Dict, Any, List
 
-from ...report_styling import (
+from report_styling import (
     add_list_item, add_paragraph, add_subheading, add_subheading_h3, 
     add_subheading_h4, format_severity, add_table, add_hyperlink, 
     add_code_block, add_image_if_exists
