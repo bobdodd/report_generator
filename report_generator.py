@@ -35,6 +35,7 @@ from sections.summary_findings.landmarks import add_landmarks_section
 from sections.summary_findings.language import add_language_section
 from sections.summary_findings.lists import add_lists_section
 from sections.summary_findings.maps import add_maps_section
+from sections.summary_findings.media_queries import add_media_queries_section
 from sections.summary_findings.menus import add_menus_section
 from sections.summary_findings.more_controls import add_more_controls_section
 from sections.summary_findings.structure import add_structure_summary_section
@@ -57,6 +58,7 @@ from sections.detailed_findings.images import add_detailed_images
 from sections.detailed_findings.landmarks import add_detailed_landmarks
 from sections.detailed_findings.language import add_detailed_language
 from sections.detailed_findings.lists import add_detailed_lists
+from sections.detailed_findings.media_queries import add_detailed_media_queries
 from sections.detailed_findings.structure import add_detailed_structure
 # Import the new detailed sections
 from sections.detailed_findings.maps import add_detailed_maps
@@ -113,6 +115,9 @@ def create_report_template(db_connection, title, author, date):
     h1 = doc.add_heading('Summary findings', level=1)
     h1.style = doc.styles['Heading 1']
 
+    # Add Media Queries Section (first, as it affects overall responsiveness)
+    add_media_queries_section(doc, db_connection, total_domains)
+    
     # Add Accessible Names Section
     add_accessible_names_section(doc, db_connection, total_domains)
     
@@ -189,6 +194,9 @@ def create_report_template(db_connection, title, author, date):
     h1 = doc.add_heading('Detailed findings', level=1)
     h1.style = doc.styles['Heading 1']
 
+    # Add Detailed Media Queries Section (first, as it affects overall responsiveness)
+    add_detailed_media_queries(doc, db_connection, total_domains)
+    
     # Add Detailed Accessible Names Section
     add_detailed_accessible_names(doc, db_connection, total_domains)
     
