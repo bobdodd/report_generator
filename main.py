@@ -16,7 +16,10 @@ from report_generator import generate_report
 @click.option('--date', '-d', 
               default=datetime.now().strftime("%Y-%m-%d"),
               help='Date of the report (YYYY-MM-DD)')
-def main(title, author, date, output_folder):
+@click.option('--database', '-db',
+              default=None,
+              help='MongoDB database name to use (default: accessibility_tests)')
+def main(title, author, date, output_folder, database):
     """Generate an accessibility test report with specified parameters."""
     try:
         datetime.strptime(date, "%Y-%m-%d")
@@ -29,8 +32,10 @@ def main(title, author, date, output_folder):
     click.echo(f"Author: {author}")
     click.echo(f"Date: {date}")
     click.echo(f"Output folder: {output_folder}")
+    if database:
+        click.echo(f"Database: {database}")
     
-    db = AccessibilityDB()
+    db = AccessibilityDB(db_name=database)
     report_file = generate_report(db, title, author, date, output_folder)
     
     if report_file:
