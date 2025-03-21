@@ -38,6 +38,7 @@ from sections.summary_findings.maps import add_maps_section
 from sections.summary_findings.media_queries import add_media_queries_section
 from sections.summary_findings.menus import add_menus_section
 from sections.summary_findings.more_controls import add_more_controls_section
+from sections.summary_findings.responsive_accessibility import add_responsive_accessibility_summary
 from sections.summary_findings.structure import add_structure_summary_section
 from sections.summary_findings.tabindex import add_tabindex_section
 from sections.summary_findings.title_attribute import add_title_attribute_section
@@ -59,6 +60,7 @@ from sections.detailed_findings.landmarks import add_detailed_landmarks
 from sections.detailed_findings.language import add_detailed_language
 from sections.detailed_findings.lists import add_detailed_lists
 from sections.detailed_findings.media_queries import add_detailed_media_queries
+from sections.detailed_findings.responsive_accessibility import add_responsive_accessibility_detailed
 from sections.detailed_findings.structure import add_detailed_structure
 # Import the new detailed sections
 from sections.detailed_findings.maps import add_detailed_maps
@@ -117,6 +119,9 @@ def create_report_template(db_connection, title, author, date):
 
     # Add Media Queries Section (first, as it affects overall responsiveness)
     add_media_queries_section(doc, db_connection, total_domains)
+    
+    # Add Responsive Accessibility Section (right after media queries)
+    add_responsive_accessibility_summary(doc, db_connection, total_domains)
     
     # Add Accessible Names Section
     add_accessible_names_section(doc, db_connection, total_domains)
@@ -196,6 +201,9 @@ def create_report_template(db_connection, title, author, date):
 
     # Add Detailed Media Queries Section (first, as it affects overall responsiveness)
     add_detailed_media_queries(doc, db_connection, total_domains)
+    
+    # Add Detailed Responsive Accessibility Section (right after media queries)
+    add_responsive_accessibility_detailed(doc, db_connection, total_domains)
     
     # Add Detailed Accessible Names Section
     add_detailed_accessible_names(doc, db_connection, total_domains)
