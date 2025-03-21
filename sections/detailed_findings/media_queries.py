@@ -30,30 +30,81 @@ CSS Media queries are essential for creating accessible websites that adapt to d
 
     doc.add_paragraph()
 
-    # Get breakpoint data from all pages
+    # Get breakpoint data from all pages, using the new dedicated structure
     breakpoint_data = {}
     pages_with_breakpoints = list(db_connection.page_results.find(
-        {"results.accessibility.tests.media_queries.media_queries.details.breakpoints": {"$exists": True}},
+        {"results.accessibility.tests.media_queries.media_queries.responsiveBreakpoints": {"$exists": True}},
         {
             "url": 1,
-            "results.accessibility.tests.media_queries.media_queries.details.breakpoints": 1,
+            "results.accessibility.tests.media_queries.media_queries.responsiveBreakpoints": 1,
             "_id": 0
         }
     ))
 
-    # Create a histogram of breakpoints
+    # Collect all breakpoints across pages
+    all_breakpoints = set()
+    breakpoint_by_category = {
+        'mobile': set(),
+        'tablet': set(),
+        'desktop': set(),
+        'largeScreen': set()
+    }
     breakpoint_histogram = {}
+    
     for page in pages_with_breakpoints:
-        breakpoints = page['results']['accessibility']['tests']['media_queries']['media_queries']['details']['breakpoints']
-        for bp in breakpoints:
-            breakpoint_histogram[bp] = breakpoint_histogram.get(bp, 0) + 1
+        if 'responsiveBreakpoints' in page['results']['accessibility']['tests']['media_queries']['media_queries']:
+            breakpoints_data = page['results']['accessibility']['tests']['media_queries']['media_queries']['responsiveBreakpoints']
+            
+            # Add to the full list of breakpoints
+            if 'allBreakpoints' in breakpoints_data:
+                for bp in breakpoints_data['allBreakpoints']:
+                    all_breakpoints.add(bp)
+                    breakpoint_histogram[bp] = breakpoint_histogram.get(bp, 0) + 1
+            
+            # Add to category-specific sets
+            if 'byCategory' in breakpoints_data:
+                for category, bps in breakpoints_data['byCategory'].items():
+                    if category in breakpoint_by_category:
+                        for bp in bps:
+                            breakpoint_by_category[category].add(bp)
     
     # Add common breakpoints section if we have data
     if breakpoint_histogram:
         doc.add_heading('Common Responsive Breakpoints', level=3)
         doc.add_paragraph("The following breakpoints (in pixels) were detected across the site:")
         
+        # Create a table for breakpoints by category
+        doc.add_heading('Breakpoints by Device Category', level=4)
+        category_table = doc.add_table(rows=5, cols=2)
+        category_table.style = 'Table Grid'
+        
+        # Add headers
+        headers = category_table.rows[0].cells
+        headers[0].text = "Device Category"
+        headers[1].text = "Breakpoints (px)"
+        
+        # Add category data
+        categories = [
+            ("Mobile (≤480px)", sorted(breakpoint_by_category['mobile'])),
+            ("Tablet (481-768px)", sorted(breakpoint_by_category['tablet'])),
+            ("Desktop (769-1200px)", sorted(breakpoint_by_category['desktop'])),
+            ("Large Screen (>1200px)", sorted(breakpoint_by_category['largeScreen']))
+        ]
+        
+        for i, (category, bps) in enumerate(categories, 1):
+            row = category_table.rows[i].cells
+            row[0].text = category
+            row[1].text = ", ".join(str(bp) for bp in bps) if bps else "None detected"
+        
+        # Format the table
+        format_table_text(category_table)
+        
+        doc.add_paragraph()
+        
         # Create table for breakpoint histogram
+        doc.add_heading('Breakpoint Frequency', level=4)
+        doc.add_paragraph("This table shows how frequently each breakpoint appears across all pages:")
+        
         sorted_breakpoints = sorted(breakpoint_histogram.items())
         bp_table = doc.add_table(rows=len(sorted_breakpoints) + 1, cols=2)
         bp_table.style = 'Table Grid'
