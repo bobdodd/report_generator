@@ -6,7 +6,6 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import logging
 from typing import Dict, Any, List
 
-from ..sections_header import create_section_heading
 from ...report_styling import (
     add_list_item, add_paragraph, add_subheading, add_subheading_h3, 
     add_subheading_h4, format_severity, add_table, add_hyperlink, 
@@ -28,31 +27,62 @@ def get_breakpoint_category(width: int) -> str:
     else:
         return "Desktop (Large)"
 
-def add_responsive_accessibility_detailed(document, results: Dict[str, Any], screenshots_dir: str = None) -> None:
+def add_responsive_accessibility_detailed(document, db_connection, total_domains, screenshots_dir: str = None) -> None:
     """
     Add responsive accessibility detailed findings to the report
     
     Args:
         document: Document object to add content to
-        results: Test results dictionary
+        db_connection: Database connection
+        total_domains: Set of all domains analyzed
         screenshots_dir: Directory containing screenshots
     """
     # Create section heading
-    create_section_heading(
-        document, 
-        "Responsive Accessibility Analysis", 
-        "Detailed evaluation of accessibility at different viewport sizes"
-    )
+    document.add_page_break()
+    h2 = document.add_heading('Responsive Accessibility Analysis', level=2)
+    h2.style = document.styles['Heading 2']
     
-    responsive_testing = results.get('responsive_testing', {})
-    if not responsive_testing:
-        add_paragraph(document, "No responsive testing data available.")
+    # Add subtitle
+    sub_para = document.add_paragraph("Detailed evaluation of accessibility at different viewport sizes")
+    sub_para.style = document.styles['Normal']
+    for run in sub_para.runs:
+        run.italic = True
+    
+    # Query for pages with responsive testing results
+    pages_with_responsive_testing = list(db_connection.page_results.find(
+        {"results.accessibility.responsive_testing": {"$exists": True}},
+        {
+            "url": 1,
+            "results.accessibility.responsive_testing": 1,
+            "_id": 0
+        }
+    ).sort("url", 1))
+    
+    if not pages_with_responsive_testing:
+        add_paragraph(document, "No responsive testing data available across any pages.")
         return
     
-    # Extract key information
-    breakpoints = responsive_testing.get('breakpoints', [])
-    consolidated_results = responsive_testing.get('consolidated', {})
-    breakpoint_results = responsive_testing.get('breakpoint_results', {})
+    # Collect all breakpoints across all pages
+    all_breakpoints = set()
+    all_pages_data = []
+    
+    for page in pages_with_responsive_testing:
+        url = page.get('url', 'Unknown URL')
+        responsive_testing = page.get('results', {}).get('accessibility', {}).get('responsive_testing', {})
+        
+        if not responsive_testing:
+            continue
+            
+        breakpoints = responsive_testing.get('breakpoints', [])
+        all_breakpoints.update(breakpoints)
+        
+        # Store this page data for later use
+        all_pages_data.append({
+            'url': url,
+            'responsive_testing': responsive_testing
+        })
+    
+    sorted_breakpoints = sorted(list(all_breakpoints))
     
     # Add test methodology and documentation
     add_subheading(document, "Test Methodology")
@@ -79,25 +109,48 @@ def add_responsive_accessibility_detailed(document, results: Dict[str, Any], scr
     # Add breakpoints analysis
     add_subheading(document, "Breakpoints Analysis")
     
-    # Format breakpoints into a table with categories
-    headers = ["Breakpoint Width", "Device Category", "Issues Found"]
+    # Format breakpoints into a table with categories and issues count
+    headers = ["Breakpoint Width", "Device Category", "Issues Found", "Pages Affected"]
     rows = []
     
-    for bp in sorted([int(bp) for bp in breakpoints]):
-        bp_str = str(bp)
-        category = get_breakpoint_category(bp)
+    # Count issues at each breakpoint across all pages
+    breakpoint_issue_counts = {}
+    breakpoint_page_counts = {}
+    
+    for page_data in all_pages_data:
+        responsive_testing = page_data['responsive_testing']
+        breakpoint_results = responsive_testing.get('breakpoint_results', {})
         
-        # Count issues at this breakpoint
-        issues_count = 0
-        if bp_str in breakpoint_results:
-            bp_data = breakpoint_results[bp_str]
+        for bp_str, bp_data in breakpoint_results.items():
+            try:
+                bp = int(bp_str)
+            except ValueError:
+                continue
+                
+            if bp not in breakpoint_issue_counts:
+                breakpoint_issue_counts[bp] = 0
+                breakpoint_page_counts[bp] = 0
+            
+            # Count issues in this breakpoint for this page
+            issues_count = 0
             for test_name, test_data in bp_data.get('tests', {}).items():
                 issues_count += len(test_data.get('issues', []))
+            
+            if issues_count > 0:
+                breakpoint_issue_counts[bp] += issues_count
+                breakpoint_page_counts[bp] += 1
+    
+    # Build the table rows
+    for bp in sorted(list(all_breakpoints)):
+        category = get_breakpoint_category(bp)
+        issues_count = breakpoint_issue_counts.get(bp, 0)
+        pages_count = breakpoint_page_counts.get(bp, 0)
         
         rows.append([
             f"{bp}px",
             category,
-            str(issues_count)
+            str(issues_count),
+            f"{pages_count} of {len(all_pages_data)}"
         ])
     
     if rows:
@@ -106,7 +159,63 @@ def add_responsive_accessibility_detailed(document, results: Dict[str, Any], scr
         add_paragraph(document, "No breakpoints were analyzed.")
     
     # Process detailed results for each test type
-    tests_summary = consolidated_results.get('testsSummary', {})
+    # Build a summary of issues across all pages by test type
+    test_summaries = {
+        'overflow': {'issueCount': 0, 'affectedBreakpoints': set(), 'affectedPages': set()},
+        'touchTargets': {'issueCount': 0, 'affectedBreakpoints': set(), 'affectedPages': set()},
+        'fontScaling': {'issueCount': 0, 'affectedBreakpoints': set(), 'affectedPages': set()},
+        'fixedPosition': {'issueCount': 0, 'affectedBreakpoints': set(), 'affectedPages': set()},
+        'contentStacking': {'issueCount': 0, 'affectedBreakpoints': set(), 'affectedPages': set()}
+    }
+    
+    # Collect examples of issues for each test type from all pages
+    test_examples = {}
+    
+    # Process all pages to aggregate test data
+    for page_data in all_pages_data:
+        url = page_data['url']
+        responsive_testing = page_data['responsive_testing']
+        breakpoint_results = responsive_testing.get('breakpoint_results', {})
+        consolidated = responsive_testing.get('consolidated', {})
+        tests_summary = consolidated.get('testsSummary', {})
+        
+        # Aggregate from consolidated summaries
+        for test_key in test_summaries.keys():
+            if test_key in tests_summary:
+                test_data = tests_summary[test_key]
+                issue_count = test_data.get('issueCount', 0)
+                
+                if issue_count > 0:
+                    test_summaries[test_key]['issueCount'] += issue_count
+                    test_summaries[test_key]['affectedPages'].add(url)
+                    test_summaries[test_key]['affectedBreakpoints'].update(
+                        test_data.get('affectedBreakpoints', [])
+                    )
+        
+        # Collect detailed examples from breakpoint results
+        for bp_str, bp_data in breakpoint_results.items():
+            try:
+                bp = int(bp_str)
+            except ValueError:
+                continue
+                
+            tests = bp_data.get('tests', {})
+            
+            for test_key in test_summaries.keys():
+                if test_key not in tests:
+                    continue
+                    
+                test_result = tests[test_key]
+                issues = test_result.get('issues', [])
+                
+                if issues and len(issues) > 0:
+                    # Store the first new example we find for each test type
+                    if test_key not in test_examples:
+                        test_examples[test_key] = {
+                            'url': url,
+                            'breakpoint': bp,
+                            'issues': issues[:3]  # Store up to 3 examples
+                        }
     
     # Define test categories in a specific order with better names
     test_categories = {
@@ -138,12 +247,13 @@ def add_responsive_accessibility_detailed(document, results: Dict[str, Any], scr
     }
     
     for test_key, test_info in test_categories.items():
-        if test_key not in tests_summary or tests_summary[test_key].get('issueCount', 0) == 0:
+        if test_key not in test_summaries or test_summaries[test_key]['issueCount'] == 0:
             continue
         
-        test_data = tests_summary[test_key]
-        issue_count = test_data.get('issueCount', 0)
-        affected_bps = test_data.get('affectedBreakpoints', [])
+        test_data = test_summaries[test_key]
+        issue_count = test_data['issueCount']
+        affected_bps = sorted(list(test_data['affectedBreakpoints']))
+        affected_pages = sorted(list(test_data['affectedPages']))
         
         # Create section for this test type
         add_subheading(document, test_info['name'])
@@ -155,57 +265,71 @@ def add_responsive_accessibility_detailed(document, results: Dict[str, Any], scr
             f"This test evaluates compliance with WCAG {test_info['wcag']}."
         )
         
-        # Summary of findings for this test type
+        # Detail affected pages and breakpoints
         add_paragraph(
             document,
-            f"Found {issue_count} issues across {len(affected_bps)} breakpoints."
+            f"Found {issue_count} issues across {len(affected_pages)} pages and {len(affected_bps)} breakpoints."
         )
+        
+        # Show affected pages as list
+        if affected_pages:
+            add_subheading_h3(document, "Affected Pages")
+            for url in affected_pages[:10]:  # Limit to 10 pages to avoid overwhelming the report
+                add_list_item(document, url)
+            
+            if len(affected_pages) > 10:
+                add_paragraph(
+                    document,
+                    f"... and {len(affected_pages) - 10} more pages affected."
+                )
         
         # Detail affected breakpoints
         if affected_bps:
             add_subheading_h3(document, "Affected Breakpoints")
+            
+            # Create a table of breakpoints with their categories
+            bp_headers = ["Breakpoint", "Device Category", "Issues"]
+            bp_rows = []
+            
             for bp in sorted([int(bp) for bp in affected_bps]):
                 category = get_breakpoint_category(bp)
+                issues_count = breakpoint_issue_counts.get(bp, 0)
                 
-                # Get issues for this breakpoint and test
-                bp_issues = []
-                if str(bp) in breakpoint_results:
-                    bp_data = breakpoint_results[str(bp)]
-                    if 'tests' in bp_data and test_key in bp_data['tests']:
-                        test_result = bp_data['tests'][test_key]
-                        bp_issues = test_result.get('issues', [])
+                bp_rows.append([
+                    f"{bp}px",
+                    category,
+                    str(issues_count)
+                ])
+            
+            if bp_rows:
+                add_table(document, bp_headers, bp_rows)
+            
+            # Show examples from this test type
+            if test_key in test_examples:
+                example_data = test_examples[test_key]
+                issues = example_data['issues']
+                url = example_data['url']
+                bp = example_data['breakpoint']
                 
-                # Add breakpoint heading with issue count
-                add_subheading_h4(document, f"{bp}px ({category}) - {len(bp_issues)} issues")
+                add_subheading_h3(document, f"Examples at {bp}px breakpoint from {url}")
                 
-                # Add details for up to 3 issues per breakpoint to avoid overwhelming the report
-                if bp_issues:
-                    for i, issue in enumerate(bp_issues[:3]):
-                        element_type = issue.get('element', 'Unknown element')
-                        element_id = f" (id: {issue['id']})" if issue.get('id') else ""
-                        details = issue.get('details', 'No details available')
-                        severity = issue.get('severity', 'medium')
-                        
-                        # Format issue item with severity color
-                        para = document.add_paragraph(style='List Bullet')
-                        run = para.add_run(f"{element_type}{element_id}: ")
-                        run.bold = True
-                        
-                        # Add severity indicator
-                        severity_run = para.add_run(f"[{severity.upper()}] ")
-                        format_severity(severity_run, severity)
-                        
-                        # Add issue details
-                        para.add_run(details)
+                for issue in issues:
+                    element_type = issue.get('element', 'Unknown element')
+                    element_id = f" (id: {issue['id']})" if issue.get('id') else ""
+                    details = issue.get('details', 'No details available')
+                    severity = issue.get('severity', 'medium')
                     
-                    # If there are more issues, add a note
-                    if len(bp_issues) > 3:
-                        add_paragraph(
-                            document,
-                            f"... and {len(bp_issues) - 3} more issues at this breakpoint."
-                        )
-                else:
-                    add_paragraph(document, "No specific issues documented at this breakpoint.")
+                    # Format issue item with severity color
+                    para = document.add_paragraph(style='List Bullet')
+                    run = para.add_run(f"{element_type}{element_id}: ")
+                    run.bold = True
+                    
+                    # Add severity indicator
+                    severity_run = para.add_run(f"[{severity.upper()}] ")
+                    format_severity(severity_run, severity)
+                    
+                    # Add issue details
+                    para.add_run(details)
         
         # Add recommendations for this test type
         add_subheading_h3(document, "Recommendations")
@@ -274,49 +398,51 @@ def add_responsive_accessibility_detailed(document, results: Dict[str, Any], scr
                 "Ensure that the responsive design maintains a coherent experience across all breakpoints."
             )
     
-    # Add consolidated findings summary
-    elements = consolidated_results.get('elements', {})
-    if elements:
-        add_subheading(document, "Elements with Issues Across Multiple Breakpoints")
+    # Find elements with issues across multiple breakpoints in all pages
+    add_subheading(document, "Elements with Issues Across Multiple Breakpoints")
+    
+    # This requires more complex aggregation - we'll need to check actual issue details
+    # For now, we'll just summarize the most problematic pages
+    problem_pages = {}
+    
+    for page_data in all_pages_data:
+        url = page_data['url']
+        responsive_testing = page_data['responsive_testing']
+        consolidated = responsive_testing.get('consolidated', {})
         
-        # Find elements with issues at multiple breakpoints
-        multi_breakpoint_elements = {
-            k: v for k, v in elements.items() 
-            if len(v.get('breakpoints', [])) > 1
-        }
+        if 'elements' in consolidated:
+            elements = consolidated['elements']
+            multi_breakpoint_elements = {
+                k: v for k, v in elements.items() 
+                if len(v.get('breakpoints', [])) > 1
+            }
+            
+            if multi_breakpoint_elements:
+                problem_pages[url] = len(multi_breakpoint_elements)
+    
+    if problem_pages:
+        # Sort pages by number of problematic elements
+        sorted_pages = sorted(problem_pages.items(), key=lambda x: x[1], reverse=True)
         
-        if multi_breakpoint_elements:
-            headers = ["Element", "Issue Type", "Breakpoints Affected", "Details"]
-            rows = []
-            
-            for elem_key, elem_data in multi_breakpoint_elements.items():
-                element_name = elem_data.get('element', 'Unknown')
-                if elem_data.get('id'):
-                    element_name += f" (id: {elem_data['id']})"
-                
-                issue_type = elem_data.get('issueType', 'Unknown issue')
-                breakpoints = [str(bp) for bp in elem_data.get('breakpoints', [])]
-                details = elem_data.get('details', 'No details provided')
-                
-                rows.append([
-                    element_name,
-                    issue_type,
-                    ", ".join(breakpoints),
-                    details
-                ])
-            
-            if rows:
-                table = add_table(document, headers, rows)
-            
-            add_paragraph(
-                document,
-                "These elements have issues across multiple breakpoints and should be prioritized for remediation."
-            )
-        else:
-            add_paragraph(
-                document,
-                "No elements have issues across multiple breakpoints."
-            )
+        headers = ["Page URL", "Elements with Cross-Breakpoint Issues"]
+        rows = []
+        
+        for url, count in sorted_pages[:10]:  # Limit to top 10
+            rows.append([url, str(count)])
+        
+        if rows:
+            add_table(document, headers, rows)
+        
+        add_paragraph(
+            document,
+            "Pages listed above have elements with issues that persist across multiple breakpoints. "
+            "These should be prioritized for remediation as they impact users on multiple device types."
+        )
+    else:
+        add_paragraph(
+            document,
+            "No elements with issues across multiple breakpoints were identified."
+        )
     
     # Add technical notes section
     add_subheading(document, "Technical Notes")
