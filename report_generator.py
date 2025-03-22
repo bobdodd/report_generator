@@ -78,6 +78,8 @@ from sections.detailed_findings.videos import add_detailed_videos
 
 # Import appendices
 from sections.appendices import add_appendices
+# Import site-specific reports
+from sections.site_specific_reports import add_site_specific_reports
 
 def create_report_template(db_connection, title, author, date):
     print("Starting report creation...")
@@ -272,6 +274,12 @@ def create_report_template(db_connection, title, author, date):
     
     # Add Detailed Videos Section
     add_detailed_videos(doc, db_connection, total_domains)
+
+    #############################################
+    # Site Specific Reports
+    #############################################
+    doc.add_page_break()
+    add_site_specific_reports(doc, db_connection, total_domains)
 
     #############################################
     # Appendices
