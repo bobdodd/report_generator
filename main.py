@@ -1,6 +1,11 @@
 import click
 from datetime import datetime
-from db import AccessibilityDB
+import sys
+import os
+
+# Add the test_with_mongo directory to the path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../test_with_mongo')))
+from database import AccessibilityDB
 from report_generator import generate_report
 
 @click.command()

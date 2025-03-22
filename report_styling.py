@@ -129,3 +129,146 @@ def add_page_number(paragraph):
     run._r.append(fldChar1)
     run._r.append(instrText)
     run._r.append(fldChar2)
+
+def add_paragraph(document, text=None):
+    """Add a paragraph with the specified text"""
+    paragraph = document.add_paragraph()
+    if text:
+        paragraph.add_run(text)
+    return paragraph
+
+def add_list_item(document, text):
+    """Add a bulleted list item"""
+    paragraph = document.add_paragraph(text, style='List Bullet')
+    return paragraph
+
+def add_subheading(document, text):
+    """Add a subheading (H2)"""
+    heading = document.add_heading(text, level=2)
+    heading.style = document.styles['Heading 2']
+    return heading
+
+def add_subheading_h3(document, text):
+    """Add a subheading (H3)"""
+    heading = document.add_heading(text, level=3)
+    heading.style = document.styles['Heading 3']
+    return heading
+
+def add_subheading_h4(document, text):
+    """Add a subheading (H4)"""
+    paragraph = document.add_paragraph()
+    run = paragraph.add_run(text)
+    run.bold = True
+    run.font.size = Pt(14)
+    return paragraph
+
+def format_severity(run, severity):
+    """Format text with severity color"""
+    if severity.lower() == 'high':
+        run.font.color.rgb = RGBColor(192, 0, 0)  # Red
+    elif severity.lower() == 'medium':
+        run.font.color.rgb = RGBColor(255, 127, 0)  # Orange
+    elif severity.lower() == 'low':
+        run.font.color.rgb = RGBColor(150, 150, 0)  # Yellow-ish
+    return run
+
+def add_table(document, headers, rows):
+    """Add a table with headers and rows"""
+    if not rows:
+        return None
+        
+    num_cols = len(headers)
+    num_rows = len(rows) + 1  # +1 for header row
+    
+    table = document.add_table(rows=num_rows, cols=num_cols)
+    table.style = 'Table Grid'
+    
+    # Add headers
+    header_row = table.rows[0]
+    for i, header in enumerate(headers):
+        cell = header_row.cells[i]
+        cell.text = header
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(14)
+                run.font.name = 'Arial'
+    
+    # Add data rows
+    for i, row_data in enumerate(rows):
+        row = table.rows[i + 1]  # +1 to skip header
+        for j, cell_data in enumerate(row_data):
+            if j < len(row.cells):  # Ensure we don't exceed column count
+                cell = row.cells[j]
+                cell.text = str(cell_data)
+                
+                # Apply formatting
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(14)
+                        run.font.name = 'Arial'
+    
+    return table
+
+def add_hyperlink(paragraph, text, url):
+    """Add a hyperlink to a paragraph"""
+    # Create the hyperlink
+    run = paragraph.add_run(text)
+    run.font.color.rgb = RGBColor(0, 0, 255)  # Blue color
+    run.font.underline = True
+    
+    # Create the hyperlink relationship
+    r_id = paragraph.part.relate_to(url, 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink', is_external=True)
+    
+    # Create the hyperlink element
+    hyperlink = OxmlElement('w:hyperlink')
+    hyperlink.set(qn('r:id'), r_id)
+    
+    # Append the run to the hyperlink
+    hyperlink.append(run._element)
+    
+    # Replace the run with the hyperlink
+    run._element.getparent().replace(run._element, hyperlink)
+    
+    return hyperlink
+
+def add_code_block(document, code_text):
+    """Add a formatted code block with monospace font and gray background"""
+    paragraph = document.add_paragraph()
+    paragraph.style = document.styles['Normal']
+    
+    # Set custom spacing and formatting
+    paragraph.paragraph_format.left_indent = Inches(0.5)
+    paragraph.paragraph_format.right_indent = Inches(0.5)
+    paragraph.paragraph_format.space_before = Pt(12)
+    paragraph.paragraph_format.space_after = Pt(12)
+    
+    run = paragraph.add_run(code_text)
+    run.font.name = 'Courier New'  # Monospace font
+    run.font.size = Pt(12)  # Slightly smaller than normal text
+    
+    # We can't directly set background color in python-docx, 
+    # so we'd need to use XML manipulation for that
+    
+    return paragraph
+
+def add_image_if_exists(document, image_path, width=None, caption=None):
+    """Add an image if the file exists, with optional caption and width"""
+    import os
+    
+    if not os.path.exists(image_path):
+        return None
+        
+    try:
+        if width:
+            document.add_picture(image_path, width=width)
+        else:
+            document.add_picture(image_path)
+            
+        if caption:
+            cap_para = document.add_paragraph(caption, style='Caption')
+            
+        return True
+    except Exception as e:
+        print(f"Error adding image {image_path}: {str(e)}")
+        return False

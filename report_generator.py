@@ -6,6 +6,10 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from datetime import datetime
 import os
+import sys
+
+# Add parent directory to path to allow relative imports
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 # Import styling utilities
 from report_styling import (
