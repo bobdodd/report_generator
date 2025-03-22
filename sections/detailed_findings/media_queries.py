@@ -5,7 +5,7 @@ from docx.shared import Pt
 def add_detailed_media_queries(doc, db_connection, total_domains):
     """Add the detailed Media Queries section"""
     doc.add_page_break()
-    h2 = doc.add_heading('Media Queries and Responsive Design', level=2)
+    h2 = doc.add_heading('Detailed Media Queries Analysis', level=2)
     h2.style = doc.styles['Heading 2']
 
     # Add explanation

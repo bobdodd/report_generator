@@ -4,7 +4,7 @@ from report_styling import format_table_text
 def add_media_queries_section(doc, db_connection, total_domains):
     """Add the Media Queries section to the summary findings"""
     doc.add_paragraph()
-    h2 = doc.add_heading('Media Queries and Responsive Design', level=2)
+    h2 = doc.add_heading('Media Queries Summary', level=2)
     h2.style = doc.styles['Heading 2']
 
     # Collect responsive breakpoints across all pages
@@ -152,14 +152,7 @@ def add_media_queries_section(doc, db_connection, total_domains):
     # Format the table text
     format_table_text(table)
 
-    # Add some explanation
-    doc.add_paragraph()
-    p = doc.add_paragraph("Media queries are essential for implementing responsive design and honoring user preferences. Their proper implementation affects several WCAG criteria:")
-    
-    doc.add_paragraph("1.4.4 Resize text - Content can be resized up to 200% without loss of functionality", style='List Bullet')
-    doc.add_paragraph("1.4.10 Reflow - Content can be presented without horizontal scrolling at widths up to 320px", style='List Bullet')
-    doc.add_paragraph("2.3.3 Animation from Interactions - Motion animation triggered by interaction can be disabled", style='List Bullet')
-    doc.add_paragraph("1.4.8 Visual Presentation - Users can select foreground and background colors (e.g., dark mode)", style='List Bullet')
+    # Removed explanatory text to keep the summary concise
     
     # Add space after the section
     doc.add_paragraph()

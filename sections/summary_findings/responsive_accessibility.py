@@ -37,7 +37,7 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
     """
     # Create section heading
     document.add_paragraph()
-    h2 = document.add_heading('Responsive Accessibility Analysis', level=2)
+    h2 = document.add_heading('Responsive Accessibility Analysis Summary', level=2)
     h2.style = document.styles['Heading 2']
     
     # Add subtitle
@@ -65,9 +65,18 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
     total_issues = 0
     affected_breakpoints = 0
     pages_with_issues = 0
+    pages_with_skipped_tests = 0
+    pages_with_actual_tests = 0
     
     for page in pages_with_responsive_testing:
         responsive_testing = page.get('results', {}).get('accessibility', {}).get('responsive_testing', {})
+        
+        # Check if responsive testing was skipped due to no breakpoints
+        if responsive_testing.get('status') == 'skipped':
+            pages_with_skipped_tests += 1
+            continue
+            
+        pages_with_actual_tests += 1
         
         # Collect breakpoints
         breakpoints = responsive_testing.get('breakpoints', [])
@@ -82,6 +91,15 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
             affected_breakpoints = max(affected_breakpoints, summary.get('affectedBreakpoints', 0))
             pages_with_issues += 1
     
+    # If all pages were skipped due to no breakpoints found
+    if pages_with_skipped_tests > 0 and pages_with_actual_tests == 0:
+        add_paragraph(
+            document,
+            f"Responsive testing was skipped on {pages_with_skipped_tests} pages because no CSS media query breakpoints were found. "
+            "The site may not be using responsive design techniques with CSS media queries, or the media queries do not contain width-based breakpoints."
+        )
+        return
+    
     # Convert to list and sort breakpoints for display
     sorted_breakpoints = sorted(list(all_breakpoints))
     tested_breakpoints = len(sorted_breakpoints)
@@ -89,33 +107,35 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
     if total_issues > 0:
         add_paragraph(
             document, 
-            f"Responsive accessibility testing identified {total_issues} issues across "
-            f"{affected_breakpoints} of {tested_breakpoints} tested breakpoints. "
-            f"These issues may impact users on specific device sizes."
+            f"Found {total_issues} responsive issues across {affected_breakpoints}/{tested_breakpoints} breakpoints."
         )
     else:
         add_paragraph(
             document, 
-            f"Responsive accessibility testing across {tested_breakpoints} breakpoints found no significant issues. "
-            f"The site appears to maintain accessibility at different viewport sizes."
+            f"No responsive issues found across {tested_breakpoints} breakpoints."
         )
     
-    # Add breakpoints summary
-    add_subheading(document, "Tested Breakpoints")
+    # Add breakpoints summary in a compact table
+    add_subheading_h3(document, "Tested Breakpoints")
     
-    bp_text = []
-    for bp in sorted_breakpoints:
-        bp_text.append(f"{bp}px ({get_breakpoint_category(bp)})")
-    
-    if bp_text:
-        add_paragraph(document, "The following responsive breakpoints were tested:")
-        for text in bp_text:
-            add_list_item(document, text)
+    if sorted_breakpoints:
+        # Create a simple, compact table of breakpoints
+        headers = ["Breakpoint", "Device Category"]
+        rows = []
+        
+        for bp in sorted_breakpoints:
+            rows.append([
+                f"{bp}px",
+                get_breakpoint_category(bp)
+            ])
+            
+        if rows:
+            add_table(document, headers, rows)
     else:
         add_paragraph(document, "No breakpoints were tested.")
     
     # Add issues summary by test type
-    add_subheading(document, "Responsive Issues Summary")
+    add_subheading_h3(document, "Responsive Issues Summary")
     
     # Collect test summaries across all pages
     all_test_summaries = {
@@ -138,10 +158,15 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
         for test_key in all_test_summaries.keys():
             if test_key in tests_summary:
                 test_data = tests_summary[test_key]
-                all_test_summaries[test_key]['issueCount'] += test_data.get('issueCount', 0)
-                all_test_summaries[test_key]['affectedBreakpoints'].update(
-                    test_data.get('affectedBreakpoints', [])
-                )
+                # Make sure test_data is a dictionary
+                if isinstance(test_data, dict):
+                    all_test_summaries[test_key]['issueCount'] += test_data.get('issueCount', 0)
+                    affected_bps = test_data.get('affectedBreakpoints', [])
+                    # Make sure affected_bps is an iterable
+                    if hasattr(affected_bps, '__iter__') and not isinstance(affected_bps, str):
+                        all_test_summaries[test_key]['affectedBreakpoints'].update(affected_bps)
+                    elif affected_bps:  # Handle single value
+                        all_test_summaries[test_key]['affectedBreakpoints'].add(affected_bps)
     
     # Convert sets to lists for the template
     for test_key in all_test_summaries:
@@ -203,7 +228,7 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
             for bp in affected_bps:
                 category = get_breakpoint_category(bp)
                 bp_text.append(f"{bp}px ({category})")
-            bp_ranges = ", ".join(bp_text)
+            bp_ranges = ", ".join(bp_text)  # Show all breakpoints
         
         # Determine severity based on issue count and types
         severity = "Low"
@@ -221,114 +246,58 @@ def add_responsive_accessibility_summary(document, db_connection, total_domains)
     
     if rows:
         table = add_table(document, headers, rows)
-        
-        # Add test descriptions after the table
-        add_paragraph(document)
-        add_subheading_h3(document, "Test Descriptions")
-        
-        # Find examples from actual page results for each test type
-        examples_by_test = {}
-        
-        for page in pages_with_responsive_testing[:5]:  # Limit to first 5 pages for efficiency
-            responsive_testing = page.get('results', {}).get('accessibility', {}).get('responsive_testing', {})
-            breakpoint_results = responsive_testing.get('breakpoint_results', {})
-            
-            for bp, bp_data in breakpoint_results.items():
-                tests = bp_data.get('tests', {})
-                
-                for test_key in test_categories.keys():
-                    if test_key in tests and test_key not in examples_by_test:
-                        test_result = tests[test_key]
-                        issues = test_result.get('issues', [])
-                        
-                        if issues and len(issues) > 0:
-                            examples_by_test[test_key] = {
-                                'url': page.get('url', 'Unknown URL'),
-                                'breakpoint': bp,
-                                'example': issues[0]
-                            }
-        
-        # Display test descriptions with examples where available
-        for test_key, test_info in test_categories.items():
-            if test_key in all_test_summaries and all_test_summaries[test_key].get('issueCount', 0) > 0:
-                add_subheading_h4(document, test_info['name'])
-                add_paragraph(document, test_info['description'])
-                
-                # Add specific examples if available
-                if test_key in examples_by_test:
-                    example_data = examples_by_test[test_key]
-                    example = example_data['example']
-                    add_list_item(
-                        document, 
-                        f"Example at {example_data['breakpoint']}px: {example.get('element', 'Unknown element')} "
-                        f"({example.get('details', 'No details available')})"
-                    )
-                    add_list_item(
-                        document,
-                        f"Found on: {example_data['url']}"
-                    )
     else:
         add_paragraph(document, "No significant responsive accessibility issues were identified.")
     
     # Add recommendations section
-    add_subheading(document, "Recommendations")
+    add_subheading_h3(document, "Recommendations")
     
-    # Determine recommendations based on the aggregated test results
-    if not any(test_data['issueCount'] > 0 for test_data in all_test_summaries.values()):
-        add_paragraph(
-            document, 
-            "The site demonstrates good responsive accessibility practices. Continue to test across "
-            "different viewport sizes when making significant layout changes."
-        )
-        return
+    # Collect top issues for a concise recommendation
+    top_issues = []
+    for test_key, test_info in test_categories.items():
+        if test_key in all_test_summaries and all_test_summaries[test_key].get('issueCount', 0) > 0:
+            top_issues.append((test_key, all_test_summaries[test_key].get('issueCount', 0)))
+    
+    # Sort by issue count (descending)
+    top_issues.sort(key=lambda x: x[1], reverse=True)
+    
+    # Get top 3 issues for recommendations
+    top_3_issues = [issue[0] for issue in top_issues[:3]]
     
     # Standard recommendations based on test types with issues
     recommendations = []
     
-    if all_test_summaries.get('touchTargets', {}).get('issueCount', 0) > 0:
+    if 'touchTargets' in top_3_issues:
         recommendations.append(
-            "Increase touch target sizes to at least 44x44 pixels on mobile breakpoints. "
-            "Ensure sufficient spacing between interactive elements."
+            "Increase touch target sizes to at least 44x44 pixels on mobile breakpoints."
         )
     
-    if all_test_summaries.get('overflow', {}).get('issueCount', 0) > 0:
+    if 'overflow' in top_3_issues:
         recommendations.append(
-            "Fix content that overflows the viewport at specific breakpoints. "
-            "Use relative units (%, em, rem) and ensure content properly wraps."
+            "Fix content that overflows the viewport by using responsive units (%, em, rem)."
         )
     
-    if all_test_summaries.get('fontScaling', {}).get('issueCount', 0) > 0:
+    if 'fontScaling' in top_3_issues:
         recommendations.append(
-            "Ensure text remains readable at all viewport sizes. "
-            "Minimum text size should be 12px, with 16px recommended for body text."
+            "Ensure text remains readable with minimum size of 12px at all viewport sizes."
         )
     
-    if all_test_summaries.get('fixedPosition', {}).get('issueCount', 0) > 0:
+    if 'fixedPosition' in top_3_issues:
         recommendations.append(
-            "Review fixed position elements that may cause issues on small viewports. "
-            "Consider adjusting or removing fixed elements at mobile breakpoints."
+            "Review fixed position elements that may cause issues on small viewports."
         )
     
-    if all_test_summaries.get('contentStacking', {}).get('issueCount', 0) > 0:
+    if 'contentStacking' in top_3_issues:
         recommendations.append(
-            "Ensure content maintains a logical reading order when it reflows at different widths. "
-            "Avoid using CSS that changes the visual order from the DOM order."
+            "Ensure content maintains a logical reading order when it reflows at different widths."
         )
     
-    # Add generic recommendation if none of the above applied
-    if not recommendations:
+    # Add generic recommendation if needed to get to 3 recommendations
+    if len(recommendations) < 3:
         recommendations.append(
-            "Review and test content at all key breakpoints to ensure a consistent user experience "
-            "across different device sizes."
+            "Test content at all key breakpoints to ensure consistent experience across devices."
         )
     
-    for recommendation in recommendations:
+    # Only show top 3 recommendations
+    for recommendation in recommendations[:3]:
         add_list_item(document, recommendation)
-        
-    # Add note about testing approach
-    add_paragraph(document)
-    add_paragraph(
-        document,
-        "Responsive testing was performed at multiple breakpoints using automated viewport resizing. "
-        f"Tests were run on {len(pages_with_responsive_testing)} pages across {tested_breakpoints} different viewport widths."
-    )
