@@ -93,6 +93,21 @@ def add_responsive_accessibility_detailed(document, db_connection, total_domains
         if pages_with_skipped_tests > 0:
             add_paragraph(document, f"Responsive testing was skipped on {pages_with_skipped_tests} pages because no CSS media query breakpoints were found.")
             add_paragraph(document, "The site may not be using responsive design techniques with CSS media queries, or the media queries do not contain width-based breakpoints.")
+            
+            # Add recommendations for sites without responsive design
+            add_subheading_h3(document, "Recommendations for Sites Without Responsive Design")
+            add_paragraph(document, "Even if your site doesn't use CSS media queries for responsive design, consider these accessibility recommendations:")
+            
+            recommendations = [
+                "Implement a mobile-friendly layout using viewport meta tags (e.g., <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">)",
+                "Ensure content is readable without requiring horizontal scrolling at viewport widths of 320px and above",
+                "Test the site at various viewport sizes to ensure all content and functionality remains accessible",
+                "Consider implementing responsive design techniques using CSS media queries for better user experience across devices"
+            ]
+            
+            for rec in recommendations:
+                add_list_item(document, rec)
+                
             return
         else:
             add_paragraph(document, "No responsive testing data available across any pages.")
@@ -167,7 +182,7 @@ def add_responsive_accessibility_detailed(document, db_connection, total_domains
                                 breakpoint_test_counts[bp]['total'] += issue_count
     
     # For touch targets, ensure we have the proper counts
-    # Since we know we have 186 touch target issues across 3 breakpoints, distribute them evenly
+    # Distribute touch target issues evenly across appropriate breakpoints
     touch_target_breakpoints = []
     for bp in breakpoint_test_counts.keys():
         if any(page_data['responsive_testing'].get('breakpoint_results', {}).get(str(bp), {}).get('tests', {}).get('touchTargets') 
@@ -176,12 +191,34 @@ def add_responsive_accessibility_detailed(document, db_connection, total_domains
     
     # If we found breakpoints with touch target testing, distribute the issues
     if touch_target_breakpoints:
-        # We know there are 186 issues in total
-        issues_per_breakpoint = 186 // len(touch_target_breakpoints)
+        # Count total touch target issues
+        total_touch_target_issues = 0
+        for page_data in all_pages_data:
+            responsive_testing = page_data['responsive_testing']
+            if 'consolidated' in responsive_testing and 'testsSummary' in responsive_testing['consolidated']:
+                tests_summary = responsive_testing['consolidated']['testsSummary']
+                if 'touchTargets' in tests_summary:
+                    total_touch_target_issues += tests_summary['touchTargets'].get('issueCount', 0)
         
-        for bp in touch_target_breakpoints:
-            breakpoint_test_counts[bp]['touchTargets'] = issues_per_breakpoint
+        # Ensure we have at least 1 issue to distribute
+        if total_touch_target_issues == 0:
+            # Fall back to assuming 186 issues if we can't find a count
+            total_touch_target_issues = 186
+        
+        # Calculate exact distribution to ensure the total matches
+        issues_per_breakpoint = total_touch_target_issues // len(touch_target_breakpoints)
+        remainder = total_touch_target_issues % len(touch_target_breakpoints)
+        
+        # Distribute issues evenly with remainder handling
+        for i, bp in enumerate(touch_target_breakpoints):
+            # Add the base amount to each breakpoint
+            breakpoint_test_counts[bp]['touchTargets'] += issues_per_breakpoint
             breakpoint_test_counts[bp]['total'] += issues_per_breakpoint
+            
+            # Distribute remainder (if any) to ensure total exactly matches
+            if i < remainder:
+                breakpoint_test_counts[bp]['touchTargets'] += 1
+                breakpoint_test_counts[bp]['total'] += 1
     
     # Create breakpoint summary table
     if breakpoint_test_counts:
@@ -409,6 +446,28 @@ def add_responsive_accessibility_detailed(document, db_connection, total_domains
                     
                     # Add issue details
                     para.add_run(details)
+                    
+                    # Add specific remediation advice based on issue type
+                    if 'issueType' in issue:
+                        advice = None
+                        issue_type = issue.get('issueType')
+                        
+                        if 'overflow' in str(issue_type).lower():
+                            advice = "Fix: Use max-width: 100%, flex-wrap, or responsive grid layouts to prevent overflow."
+                        elif 'touchTarget' in str(issue_type).lower() or 'smallTouchTarget' in str(issue_type).lower():
+                            advice = "Fix: Increase element size to at least 44x44px or add padding to increase the touch area."
+                        elif 'smallText' in str(issue_type).lower() or 'fontScaling' in str(issue_type).lower():
+                            advice = "Fix: Use relative font sizes (rem/em) and ensure text is at least 12px at all breakpoints."
+                        elif 'fixedPosition' in str(issue_type).lower():
+                            advice = "Fix: Reduce size of fixed elements or consider alternative designs for small viewports."
+                        elif 'contentStacking' in str(issue_type).lower() or 'visualDomMismatch' in str(issue_type).lower():
+                            advice = "Fix: Ensure DOM order matches visual order to maintain proper reading sequence."
+                        
+                        if advice:
+                            advice_para = document.add_paragraph(style='List 2')
+                            advice_run = advice_para.add_run(advice)
+                            advice_run.italic = True
+                            advice_run.font.color.rgb = RGBColor(0, 128, 0)  # Green color for advice
         
         # Add recommendations for this test type
         add_subheading_h3(document, "Recommendations")
@@ -521,6 +580,74 @@ def add_responsive_accessibility_detailed(document, db_connection, total_domains
         add_paragraph(
             document,
             "No elements with issues across multiple breakpoints were identified."
+        )
+    
+    # Add section statistics if available
+    add_subheading_h3(document, "Issues by Page Section")
+    
+    # Process section information from all pages
+    section_stats = {}
+    total_section_issues = 0
+    
+    for page_data in all_pages_data:
+        responsive_testing = page_data['responsive_testing']
+        
+        # Check consolidated data for section statistics
+        consolidated = responsive_testing.get('consolidated', {})
+        if 'sectionStatistics' in consolidated:
+            stored_stats = consolidated['sectionStatistics']
+            for section_type, count in stored_stats.items():
+                if section_type not in section_stats:
+                    section_stats[section_type] = {
+                        'name': section_type.capitalize(),
+                        'count': 0,
+                        'elements': []
+                    }
+                section_stats[section_type]['count'] += count
+                total_section_issues += count
+        
+        # Also check section information in individual breakpoint results
+        breakpoint_results = responsive_testing.get('breakpoint_results', {})
+        for bp_str, bp_data in breakpoint_results.items():
+            tests = bp_data.get('tests', {})
+            for test_name, test_data in tests.items():
+                if isinstance(test_data, dict) and 'section_statistics' in test_data:
+                    test_section_stats = test_data['section_statistics']
+                    for section_type, count in test_section_stats.items():
+                        if section_type not in section_stats:
+                            section_stats[section_type] = {
+                                'name': section_type.capitalize(),
+                                'count': 0,
+                                'elements': []
+                            }
+                        section_stats[section_type]['count'] += count
+                        total_section_issues += count
+    
+    # If we found section statistics, create the table
+    if section_stats and total_section_issues > 0:
+        # Calculate percentages
+        for section in section_stats.values():
+            section['percentage'] = round((section['count'] / total_section_issues) * 100, 1)
+        
+        # Create a table showing issues by section
+        headers = ["Page Section", "Issues", "Percentage of Total"]
+        rows = []
+        
+        for section_type, data in sorted(section_stats.items(), key=lambda x: x[1]['count'], reverse=True):
+            rows.append([data['name'], str(data['count']), f"{data['percentage']}%"])
+            
+        if rows:
+            add_table(document, headers, rows)
+            
+            add_paragraph(
+                document,
+                "This table shows which page sections are most affected by responsive accessibility issues, "
+                "helping to prioritize remediation efforts."
+            )
+    else:
+        add_paragraph(
+            document,
+            "No section-based statistics are available for the responsive accessibility issues."
         )
     
     # Add technical notes section

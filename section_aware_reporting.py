@@ -1,267 +1,150 @@
 """
-Section-aware reporting utilities for the report generator.
-These functions help process and aggregate accessibility issues by page section.
+Section-aware report generation utilities.
 """
-import json
+from pymongo import MongoClient
 
-def get_unique_section_issues(db_connection, test_name, issue_identifier="element", extra_fields=None):
+def get_unique_section_issues(db_connection, issue_type, domain, issue_identifier=None):
     """
-    Get issues grouped by section and count unique issues per section type.
-    This handles repeating sections (header, footer, etc.) properly by counting
-    each issue type only once per section type per domain.
+    Get unique issue instances from the database, organized by page section.
     
     Args:
-        db_connection: Database connection object
-        test_name: Name of the test (e.g., 'accessible_names')
-        issue_identifier: Field to use for issue identification (default: 'element')
-        extra_fields: Additional fields to include in results (optional)
+        db_connection: MongoDB connection
+        issue_type: Type of issue (e.g., 'accessible_names', 'headings')
+        domain: Domain to filter by
+        issue_identifier: Optional identifier to further filter issues
         
     Returns:
-        Dictionary with section statistics and issues
+        A dictionary of section-organized issues
     """
-    # Query for pages with violations that include section information
-    section_query_path = f"results.accessibility.tests.{test_name}.{test_name}.details.section_statistics"
-    violations_path = f"results.accessibility.tests.{test_name}.{test_name}.details.violations"
-    
-    # Check if any pages have section statistics
-    has_section_data = db_connection.page_results.find_one({section_query_path: {"$exists": True}})
-    
-    if not has_section_data:
-        # Fallback to regular issue counting if no section data available
-        print(f"No section data found for {test_name}, falling back to regular issue counting")
-        return get_regular_issues(db_connection, test_name, issue_identifier, extra_fields)
-    
-    # Query for pages with violations
-    projection = {
-        "url": 1,
-        violations_path: 1,
-        "_id": 0
-    }
-    
-    pages_with_violations = list(db_connection.page_results.find(
-        {violations_path: {"$exists": True}},
-        projection
-    ))
-    
-    # Process violations by section
-    section_statistics = {}
-    sections_by_domain = {}
-    
-    for page in pages_with_violations:
-        domain = page['url'].replace('http://', '').replace('https://', '').split('/')[0]
+    try:
+        # Find all page results for the domain
+        domain_filter = {'url': {'$regex': domain}}
+        page_results = list(db_connection.page_results.find(domain_filter))
         
-        # Initialize domain data
-        if domain not in sections_by_domain:
-            sections_by_domain[domain] = {}
+        # Collect all issues with section information
+        sections = {}
         
-        # Get violations array and parse if needed
-        violations_path_parts = violations_path.split('.')
-        violations = page
-        for part in violations_path_parts:
-            if part in violations:
-                violations = violations[part]
-            else:
-                violations = []
-                break
+        for page in page_results:
+            url = page.get('url', '')
+            
+            # Navigate to the test results
+            if 'results' in page and 'accessibility' in page['results']:
+                accessibility = page['results']['accessibility']
+            elif 'accessibility' in page:
+                # Fallback for older data structure
+                accessibility = page['accessibility']
                 
-        if isinstance(violations, str):
-            try:
-                violations = json.loads(violations)
-            except:
-                violations = []
+                if 'tests' in accessibility and issue_type in accessibility['tests']:
+                    test_data = accessibility['tests'][issue_type]
+                    
+                    # Check for details and violations
+                    if 'details' in test_data and 'violations' in test_data['details']:
+                        violations = test_data['details']['violations']
+                        
+                        # Filter by issue_identifier if provided
+                        if issue_identifier:
+                            violations = [v for v in violations if v.get('issue') == issue_identifier]
+                        
+                        # Organize violations by section
+                        for violation in violations:
+                            if 'section' in violation:
+                                section_type = violation['section'].get('section_type', 'unknown')
+                                section_name = violation['section'].get('section_name', 'Unknown Section')
+                                
+                                # Create section entry if it doesn't exist
+                                if section_type not in sections:
+                                    sections[section_type] = {
+                                        'name': section_name,
+                                        'issues': []
+                                    }
+                                
+                                # Add issue with page URL
+                                issue_copy = violation.copy()
+                                issue_copy['page_url'] = url
+                                sections[section_type]['issues'].append(issue_copy)
         
-        # Process each violation
-        for violation in violations:
-            if not isinstance(violation, dict):
-                continue
-                
-            # Get the section info if available
-            section_info = violation.get('section', {})
-            section_type = section_info.get('section_type', 'unknown')
-            section_name = section_info.get('section_name', 'Unknown Section')
-            is_primary = section_info.get('primary', False)
-            
-            # Get the issue identifier
-            issue_key = violation.get(issue_identifier, 'unknown')
-            
-            # Create a unique key for this issue+section type
-            issue_section_key = f"{issue_key}|{section_type}"
-            
-            # Initialize section in statistics if needed
-            if section_type not in section_statistics:
-                section_statistics[section_type] = {
-                    'name': section_name,
-                    'total_count': 0,
-                    'is_primary': is_primary,
-                    'issues': {},
-                    'domains': set(),
-                    'pages': set()
-                }
-            
-            # Update global section statistics
-            section_statistics[section_type]['total_count'] += 1
-            section_statistics[section_type]['domains'].add(domain)
-            section_statistics[section_type]['pages'].add(page['url'])
-            
-            # Initialize issue in this section if needed
-            if issue_key not in section_statistics[section_type]['issues']:
-                section_statistics[section_type]['issues'][issue_key] = {
-                    'count': 0,
-                    'domains': set(),
-                    'pages': set(),
-                    'sample': violation  # Store a sample violation for reference
-                }
-            
-            # Update issue statistics for this section
-            section_statistics[section_type]['issues'][issue_key]['count'] += 1
-            section_statistics[section_type]['issues'][issue_key]['domains'].add(domain)
-            section_statistics[section_type]['issues'][issue_key]['pages'].add(page['url'])
-            
-            # Initialize section type in domain if needed
-            if section_type not in sections_by_domain[domain]:
-                sections_by_domain[domain][section_type] = {
-                    'name': section_name,
-                    'is_primary': is_primary,
-                    'count': 0,
-                    'issues': set(),
-                    'pages': set()
-                }
-            
-            # Update domain-specific section statistics
-            sections_by_domain[domain][section_type]['count'] += 1
-            sections_by_domain[domain][section_type]['issues'].add(issue_key)
-            sections_by_domain[domain][section_type]['pages'].add(page['url'])
+        return sections
     
-    # Convert set to list for serialization
-    for section in section_statistics.values():
-        section['domains'] = list(section['domains'])
-        section['pages'] = list(section['pages'])
-        
-        for issue in section['issues'].values():
-            issue['domains'] = list(issue['domains'])
-            issue['pages'] = list(issue['pages'])
-    
-    for domain in sections_by_domain.values():
-        for section in domain.values():
-            section['issues'] = list(section['issues'])
-            section['pages'] = list(section['pages'])
-    
-    # Calculate unique issues vs total instances
-    total_issues = sum(section['total_count'] for section in section_statistics.values())
-    unique_issues = sum(len(section['issues']) for section in section_statistics.values())
-    
-    # Calculate unique issues per domain
-    domain_unique_issues = {}
-    for domain, sections in sections_by_domain.items():
-        domain_unique_issues[domain] = sum(len(section['issues']) for section in sections.values())
-    
-    return {
-        'section_statistics': section_statistics,
-        'sections_by_domain': sections_by_domain,
-        'total_issues': total_issues,
-        'unique_issues': unique_issues,
-        'domain_unique_issues': domain_unique_issues,
-        'has_section_data': True
-    }
+    except Exception as e:
+        print(f"Error retrieving section issues: {e}")
+        return {}
 
-def get_regular_issues(db_connection, test_name, issue_identifier="element", extra_fields=None):
+def process_section_statistics(violations):
     """
-    Fallback function for tests without section data
+    Process violations to generate section statistics.
+    
+    Args:
+        violations: List of violations with section information
+        
+    Returns:
+        Dictionary of section statistics
     """
-    violations_path = f"results.accessibility.tests.{test_name}.{test_name}.details.violations"
+    section_stats = {}
     
-    projection = {
-        "url": 1,
-        violations_path: 1,
-        "_id": 0
-    }
-    
-    pages_with_violations = list(db_connection.page_results.find(
-        {violations_path: {"$exists": True}},
-        projection
-    ))
-    
-    # Process violations
-    issue_statistics = {}
-    issues_by_domain = {}
-    
-    for page in pages_with_violations:
-        domain = page['url'].replace('http://', '').replace('https://', '').split('/')[0]
-        
-        # Initialize domain data
-        if domain not in issues_by_domain:
-            issues_by_domain[domain] = {}
-        
-        # Get violations array and parse if needed
-        violations_path_parts = violations_path.split('.')
-        violations = page
-        for part in violations_path_parts:
-            if part in violations:
-                violations = violations[part]
-            else:
-                violations = []
-                break
-                
-        if isinstance(violations, str):
-            try:
-                violations = json.loads(violations)
-            except:
-                violations = []
-        
-        # Process each violation
-        for violation in violations:
-            if not isinstance(violation, dict):
-                continue
-                
-            # Get the issue identifier
-            issue_key = violation.get(issue_identifier, 'unknown')
+    for violation in violations:
+        if 'section' in violation:
+            section_type = violation['section'].get('section_type', 'unknown')
             
-            # Initialize issue in statistics if needed
-            if issue_key not in issue_statistics:
-                issue_statistics[issue_key] = {
+            if section_type not in section_stats:
+                section_stats[section_type] = {
+                    'name': violation['section'].get('section_name', 'Unknown Section'),
                     'count': 0,
-                    'domains': set(),
-                    'pages': set(),
-                    'sample': violation  # Store a sample violation for reference
+                    'elements': []
                 }
             
-            # Update issue statistics
-            issue_statistics[issue_key]['count'] += 1
-            issue_statistics[issue_key]['domains'].add(domain)
-            issue_statistics[issue_key]['pages'].add(page['url'])
-            
-            # Initialize issue in domain if needed
-            if issue_key not in issues_by_domain[domain]:
-                issues_by_domain[domain][issue_key] = {
-                    'count': 0,
-                    'pages': set()
-                }
-            
-            # Update domain-specific issue statistics
-            issues_by_domain[domain][issue_key]['count'] += 1
-            issues_by_domain[domain][issue_key]['pages'].add(page['url'])
+            section_stats[section_type]['count'] += 1
+            if 'element' in violation:
+                section_stats[section_type]['elements'].append(violation['element'])
     
-    # Convert set to list for serialization
-    for issue in issue_statistics.values():
-        issue['domains'] = list(issue['domains'])
-        issue['pages'] = list(issue['pages'])
+    # Calculate percentages
+    total_violations = sum(s['count'] for s in section_stats.values())
+    if total_violations > 0:
+        for section in section_stats.values():
+            section['percentage'] = round((section['count'] / total_violations) * 100, 1)
     
-    for domain in issues_by_domain.values():
-        for issue in domain.values():
-            issue['pages'] = list(issue['pages'])
+    return section_stats
+
+def format_section_table(section_data, title):
+    """
+    Format section data into an HTML table for reporting.
     
-    # Calculate statistics
-    total_issues = sum(issue['count'] for issue in issue_statistics.values())
-    unique_issues = len(issue_statistics)
+    Args:
+        section_data: Dictionary of section statistics
+        title: Title for the table
+        
+    Returns:
+        HTML table as a string
+    """
+    if not section_data:
+        return f"<p>No section data available for {title}</p>"
     
-    # Calculate unique issues per domain
-    domain_unique_issues = {domain: len(issues) for domain, issues in issues_by_domain.items()}
+    html = f"""
+    <div class="section-table">
+        <h3>{title} by Page Section</h3>
+        <table border="1" cellpadding="4" cellspacing="0">
+            <thead>
+                <tr>
+                    <th>Page Section</th>
+                    <th>Count</th>
+                    <th>Percentage</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
     
-    return {
-        'issue_statistics': issue_statistics,
-        'issues_by_domain': issues_by_domain,
-        'total_issues': total_issues,
-        'unique_issues': unique_issues,
-        'domain_unique_issues': domain_unique_issues,
-        'has_section_data': False
-    }
+    for section_type, section in section_data.items():
+        html += f"""
+            <tr>
+                <td>{section['name']}</td>
+                <td>{section['count']}</td>
+                <td>{section.get('percentage', 0)}%</td>
+            </tr>
+        """
+    
+    html += """
+            </tbody>
+        </table>
+    </div>
+    """
+    
+    return html
