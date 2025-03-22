@@ -40,18 +40,29 @@ def main(title, author, date, output_folder, database):
     if database:
         click.echo(f"Database: {database}")
     
-    db = AccessibilityDB(db_name=database)
-    report_file = generate_report(db, title, author, date, output_folder)
-    
-    if report_file:
-        click.echo(f"\nReport generated successfully: {report_file}")
-        click.echo("\nIMPORTANT: To complete the report formatting:")
-        click.echo("1. Open the document in Microsoft Word")
-        click.echo("2. Right-click anywhere in the table of contents")
-        click.echo("3. Select 'Update Field'")
-        click.echo("4. Choose 'Update entire table'")
-    else:
-        click.echo("Failed to generate report", err=True)
+    try:
+        db = AccessibilityDB(db_name=database)
+        
+        # Create output folder if it doesn't exist
+        if not os.path.exists(output_folder):
+            os.makedirs(output_folder)
+            click.echo(f"Created output folder: {output_folder}")
+        
+        report_file = generate_report(db, title, author, date, output_folder)
+        
+        if report_file:
+            click.echo(f"\nReport generated successfully: {report_file}")
+            click.echo("\nIMPORTANT: To complete the report formatting:")
+            click.echo("1. Open the document in Microsoft Word")
+            click.echo("2. Right-click anywhere in the table of contents")
+            click.echo("3. Select 'Update Field'")
+            click.echo("4. Choose 'Update entire table'")
+        else:
+            click.echo("Failed to generate report", err=True)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        click.echo(f"Error generating report: {str(e)}", err=True)
 
 if __name__ == "__main__":
     main()

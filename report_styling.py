@@ -6,6 +6,87 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 
+def get_styles():
+    """
+    Get the CSS styles for the HTML accessibility report.
+    
+    Returns:
+        String containing CSS styles
+    """
+    return """
+    body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        margin: 0;
+        padding: 0;
+        color: #333;
+    }
+    
+    header {
+        background-color: #005a9c;
+        color: white;
+        padding: 20px;
+        text-align: center;
+    }
+    
+    h1 {
+        margin: 0;
+    }
+    
+    main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    section {
+        margin-bottom: 30px;
+    }
+    
+    h2 {
+        color: #005a9c;
+        border-bottom: 2px solid #ddd;
+        padding-bottom: 5px;
+    }
+    
+    h3 {
+        color: #005a9c;
+        margin-top: 20px;
+    }
+    
+    ul {
+        margin-top: 10px;
+    }
+    
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+    }
+    
+    table th {
+        background-color: #f0f0f0;
+        text-align: left;
+        padding: 8px;
+    }
+    
+    table td {
+        padding: 8px;
+        border-bottom: 1px solid #ddd;
+    }
+    
+    .section-table {
+        margin-top: 20px;
+    }
+    
+    footer {
+        background-color: #f0f0f0;
+        text-align: center;
+        padding: 10px;
+        margin-top: 30px;
+    }
+    """
+
 def set_document_styles(doc):
     """Set up document styles with specified font sizes and spacing"""
     # Default paragraph text

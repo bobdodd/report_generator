@@ -1,126 +1,175 @@
-import json
-from report_styling import format_table_text
-from section_aware_reporting import get_unique_section_issues
+"""
+Summary findings section for accessible names issues
+"""
+import os
+from ...section_aware_reporting import process_section_statistics, format_section_table
 
-def add_accessible_names_section(doc, db_connection, total_domains):
-    """Add the Accessible Names section to the summary findings"""
-    h2 = doc.add_heading('Accessible names', level=2)
-    h2.style = doc.styles['Heading 2']
+def generate_accessible_names_summary(db, domain):
+    """
+    Generate the accessible names summary section.
     
-    # Get section-aware issue statistics
-    issue_data = get_unique_section_issues(db_connection, 'accessible_names', issue_identifier='element')
+    Args:
+        db: MongoDB database connection
+        domain: Domain to generate report for
+        
+    Returns:
+        String containing the HTML content for the section
+    """
+    # Analysis of accessible names section
+    domain_pattern = domain.replace('.', '\\.')
+    domain_filter = {'url': {'$regex': domain_pattern}}
     
-    # Add explanation paragraph
-    doc.add_paragraph("""
-    Interactive elements such as links, buttons, form fields etc. must have an accessible name that can be programmatically determined. 
-    This name is what will be announced by screen readers and other assistive technologies when the user encounters the element.
-    Without an accessible name, users will not know the purpose or function of the element.
-    """.strip())
+    # Collect accessible name issues across all pages in the domain
+    all_issues = []
     
-    # Add total statistics paragraph
-    doc.add_paragraph()
-    total_text = f"Found {issue_data['total_issues']} instances of missing accessible names across {len(issue_data['domain_unique_issues'])} domains."
-    if issue_data['has_section_data']:
-        total_text += f" Based on our analysis, there are {issue_data['unique_issues']} unique issues when accounting for repeating page sections."
-    doc.add_paragraph(total_text)
+    # Get all page results for the domain
+    page_results = list(db.page_results.find(domain_filter))
     
-    # If we have section data, show issues by section
-    if issue_data['has_section_data']:
-        doc.add_heading('Issues by Page Section', level=3)
+    for page in page_results:
+        url = page.get('url', '')
         
-        # Get relevant sections with issues
-        sections_with_issues = {
-            section_type: section_data 
-            for section_type, section_data in issue_data['section_statistics'].items()
-            if section_data['total_count'] > 0
-        }
-        
-        # Create table for section statistics
-        section_table = doc.add_table(rows=len(sections_with_issues) + 1, cols=4)
-        section_table.style = 'Table Grid'
-        
-        # Set column headers
-        headers = section_table.rows[0].cells
-        headers[0].text = "Page Section"
-        headers[1].text = "# of issues"
-        headers[2].text = "# of sites"
-        headers[3].text = "% of sites"
-        
-        # Add data for each section
-        for i, (section_type, section_data) in enumerate(sorted(sections_with_issues.items()), 1):
-            row = section_table.rows[i].cells
-            section_name = section_data['name']
-            issue_count = section_data['total_count']
-            domain_count = len(section_data['domains'])
-            percentage = (domain_count / len(total_domains)) * 100 if total_domains else 0
+        # Navigate to the accessible_names test results
+        if 'results' in page and 'accessibility' in page['results']:
+            accessibility = page['results']['accessibility']
             
-            row[0].text = section_name
-            row[1].text = str(issue_count)
-            row[2].text = str(domain_count)
-            row[3].text = f"{percentage:.1f}%"
-        
-        # Format the table text
-        format_table_text(section_table)
-        
-        # Add some space after the table
-        doc.add_paragraph()
-        
-        # Add issues by tag (element) paragraph 
-        doc.add_heading('Issues by Element Type', level=3)
-    
-    # If we don't have section data, just show by element type
-    elif not issue_data['has_section_data']:
-        doc.add_heading('Issues by Element Type', level=3)
-    
-    # Process and display issues by element type (tag)
-    tag_statistics = {}
-    
-    if issue_data['has_section_data']:
-        # Extract tag statistics from section data
-        for section_data in issue_data['section_statistics'].values():
-            for tag, tag_data in section_data['issues'].items():
-                if tag not in tag_statistics:
-                    tag_statistics[tag] = {
-                        'count': 0,
-                        'domains': set(),
-                        'pages': set()
-                    }
+            if 'tests' in accessibility and 'accessible_names' in accessibility['tests']:
+                test_data = accessibility['tests']['accessible_names']
                 
-                tag_statistics[tag]['count'] += tag_data['count']
-                tag_statistics[tag]['domains'].update(tag_data['domains'])
-                tag_statistics[tag]['pages'].update(tag_data['pages'])
-    else:
-        # Use the issue statistics directly
-        for tag, tag_data in issue_data['issue_statistics'].items():
-            tag_statistics[tag] = {
-                'count': tag_data['count'],
-                'domains': set(tag_data['domains']),
-                'pages': set(tag_data['pages'])
-            }
+                # Check for details and violations
+                if 'details' in test_data and 'violations' in test_data['details']:
+                    violations = test_data['details']['violations']
+                    
+                    # Add page URL to each violation for tracking
+                    for violation in violations:
+                        violation_copy = violation.copy()
+                        violation_copy['page_url'] = url
+                        all_issues.append(violation_copy)
     
-    # Create results table
-    table = doc.add_table(rows=len(tag_statistics) + 1, cols=4)
-    table.style = 'Table Grid'
-
-    # Set column headers
-    headers = table.rows[0].cells
-    headers[0].text = "Tag name"
-    headers[1].text = "# of instances"
-    headers[2].text = "# of sites"
-    headers[3].text = "% of sites"
-
-    # Add data for each tag
-    for i, (tag, stats) in enumerate(sorted(tag_statistics.items()), 1):
-        row = table.rows[i].cells
-        percentage = (len(stats['domains']) / len(total_domains)) * 100 if total_domains else 0
+    # Print debug info for violations
+    print(f"\nFound {len(all_issues)} issues for {domain}")
+    for page in page_results:
+        print(f"Checking page: {page.get('url', 'unknown')}")
+        if 'results' in page:
+            print(f"Results keys: {list(page['results'].keys())}")
+            if 'accessibility' in page['results']:
+                accessibility = page['results']['accessibility']
+                print(f"Accessibility keys: {list(accessibility.keys())}")
+                if 'tests' in accessibility and 'accessible_names' in accessibility['tests']:
+                    test_data = accessibility['tests']['accessible_names']
+                    print(f"Test data keys: {list(test_data.keys())}")
+                    if 'details' in test_data:
+                        details = test_data['details']
+                        print(f"Details keys: {list(details.keys())}")
+                        if 'section_statistics' in details:
+                            print(f"Section statistics: {details['section_statistics']}")
+                        if 'violations' in details:
+                            violations = details['violations']
+                            print(f"Found {len(violations)} violations")
+                            # Print first violation
+                            if violations:
+                                print(f"First violation: {violations[0]}")
+    
+    # Count issues by type
+    issue_counts = {}
+    for issue in all_issues:
+        issue_type = issue.get('element', 'unknown')
+        if issue_type not in issue_counts:
+            issue_counts[issue_type] = 0
+        issue_counts[issue_type] += 1
+    
+    # Generate section statistics if section data is available
+    section_table_html = ""
+    section_stats = {}
+    
+    # First try to get section statistics directly from the stored data
+    for page in page_results:
+        # Navigate to the accessible_names test results
+        if 'results' in page and 'accessibility' in page['results']:
+            accessibility = page['results']['accessibility']
+            
+            if 'tests' in accessibility and 'accessible_names' in accessibility['tests']:
+                test_data = accessibility['tests']['accessible_names']
+                
+                # Check for section statistics
+                if 'details' in test_data and 'section_statistics' in test_data['details']:
+                    stored_stats = test_data['details']['section_statistics']
+                    for section_type, count in stored_stats.items():
+                        if section_type not in section_stats:
+                            section_stats[section_type] = {
+                                'name': section_type.capitalize(),
+                                'count': 0,
+                                'percentage': 0
+                            }
+                        section_stats[section_type]['count'] += count
+    
+    # Calculate percentages
+    total_count = sum(s['count'] for s in section_stats.values())
+    if total_count > 0:
+        for section in section_stats.values():
+            section['percentage'] = round((section['count'] / total_count) * 100, 1)
+    
+    # If we found section statistics, generate the table
+    if section_stats:
+        section_table_html = format_section_table(section_stats, "Accessible Name Issues")
+    # Otherwise, try to generate them from the issues
+    else:
+        section_aware_issues = [issue for issue in all_issues if 'section' in issue]
+        if section_aware_issues:
+            computed_stats = process_section_statistics(section_aware_issues)
+            section_table_html = format_section_table(computed_stats, "Accessible Name Issues")
+    
+    # Create the summary HTML
+    html = f"""
+    <div class="summary-section">
+        <h2>Accessible Names Issues Summary</h2>
         
-        row[0].text = f"<{tag}>"
-        row[1].text = str(stats['count'])
-        row[2].text = str(len(stats['domains']))
-        row[3].text = f"{percentage:.1f}%"
-
-    # Format the table text
-    format_table_text(table)
-
-    # Add some space after the table
-    doc.add_paragraph()
+        <p>
+            Accessible names are text alternatives that identify interactive elements for users of assistive technologies.
+            These names are essential for screen reader users to understand the purpose of buttons, links, form controls, and images.
+        </p>
+        
+        <p>
+            <strong>Total issues found: {len(all_issues)}</strong> across {len(page_results)} pages on {domain}.
+        </p>
+    """
+    
+    if issue_counts:
+        html += """
+        <h3>Issues by Element Type</h3>
+        <ul>
+        """
+        
+        # Add individual issue types
+        for element_type, count in sorted(issue_counts.items(), key=lambda x: x[1], reverse=True):
+            html += f"<li><strong>{element_type}</strong>: {count} issues</li>\n"
+        
+        html += "</ul>"
+    
+    html += """
+        <h3>Impact on Users</h3>
+        <p>
+            When interactive elements lack proper accessible names:
+        </p>
+        <ul>
+            <li>Screen reader users cannot determine the purpose of controls</li>
+            <li>Voice control users cannot activate elements by speaking their names</li>
+            <li>Users with cognitive disabilities may have difficulty understanding element functions</li>
+        </ul>
+        
+        <h3>Key WCAG Success Criteria</h3>
+        <ul>
+            <li><strong>1.1.1 Non-text Content</strong> (Level A): All non-text content has a text alternative</li>
+            <li><strong>2.4.4 Link Purpose</strong> (Level A): The purpose of links can be determined from the link text</li>
+            <li><strong>3.3.2 Labels or Instructions</strong> (Level A): Form controls have associated labels</li>
+            <li><strong>4.1.2 Name, Role, Value</strong> (Level A): UI components have accessible names</li>
+        </ul>
+    """
+    
+    # Add section-aware table if available
+    html += section_table_html
+    
+    html += """
+    </div>
+    """
+    
+    return html
